@@ -1,0 +1,247 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  OWNER
+  MANAGER
+  ATTENDANT
+  AUDITOR
+}
+
+enum SpotType {
+  COMPACT
+  STANDARD
+  EV
+}
+
+enum SpotStatus {
+  AVAILABLE
+  OCCUPIED
+  MAINTENANCE
+}
+
+enum VehicleType {
+  COMPACT
+  STANDARD
+  EV
+}
+
+enum TicketStatus {
+  ACTIVE
+  CHECKED_OUT
+}
+
+enum EntityType {
+  GARAGE
+  SPOT
+  TICKET
+  VEHICLE
+  USER
+  RATE_POLICY
+}
+
+enum ActionType {
+  CREATED
+  UPDATED
+  DELETED
+  CHECKED_IN
+  CHECKED_OUT
+  SPOT_ASSIGNED
+  SPOT_RELEASED
+  BILLING_CALCULATED
+  AVAILABILITY_UPDATED
+}
+
+model Tenant {
+  id            String   @id @default(uuid())
+  name          String
+  email         String   @unique
+  plan          String   @default("starter")
+  status        String   @default("active")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  users         User[]
+  garages       Garage[]
+  vehicles      Vehicle[]
+  tickets       Ticket[]
+  ratePolicies  RatePolicy[]
+  auditLogs     AuditLog[]
+}
+
+model User {
+  id            String   @id @default(uuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name          String
+  email         String
+  passwordHash  String
+  role          Role
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  createdTickets Ticket[] @relation("CreatedByUser")
+  checkedOutTickets Ticket[] @relation("CheckedOutByUser")
+  auditLogs     AuditLog[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId, role])
+}
+
+model Garage {
+  id            String   @id @default(uuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name          String
+  address       String
+  timezone      String   @default("UTC")
+  status        String   @default("active")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  floors        Floor[]
+  spots         Spot[]
+  tickets       Ticket[]
+  ratePolicies  RatePolicy[]
+  auditLogs     AuditLog[]
+
+  @@index([tenantId, status])
+}
+
+model Floor {
+  id          String   @id @default(uuid())
+  garageId    String
+  garage      Garage   @relation(fields: [garageId], references: [id], onDelete: Cascade)
+  name        String
+  level       Int
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+
+  spots       Spot[]
+
+  @@unique([garageId, level])
+  @@index([garageId, status])
+}
+
+model Spot {
+  id          String     @id @default(uuid())
+  garageId    String
+  garage      Garage     @relation(fields: [garageId], references: [id], onDelete: Cascade)
+  floorId     String
+  floor       Floor      @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  spotNumber  String
+  type        SpotType
+  status      SpotStatus @default(AVAILABLE)
+  label       String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  tickets     Ticket[]
+
+  @@unique([garageId, floorId, spotNumber])
+  @@index([garageId, type, status])
+  @@index([garageId, floorId, status])
+}
+
+model Vehicle {
+  id            String      @id @default(uuid())
+  tenantId      String
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plateNumber   String
+  vehicleType   VehicleType
+  isElectric    Boolean     @default(false)
+  color         String?
+  make          String?
+  model         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  tickets       Ticket[]
+
+  @@unique([tenantId, plateNumber])
+  @@index([tenantId, plateNumber])
+}
+
+model RatePolicy {
+  id                 String   @id @default(uuid())
+  tenantId           String
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  garageId           String
+  garage             Garage   @relation(fields: [garageId], references: [id], onDelete: Cascade)
+  name               String
+  firstHourRate      Decimal  @db.Decimal(10, 2)
+  additionalHourRate Decimal  @db.Decimal(10, 2)
+  dailyCap           Decimal  @db.Decimal(10, 2)
+  currency           String   @default("USD")
+  roundingMode       String   @default("UP_TO_NEXT_HOUR")
+  isActive           Boolean  @default(true)
+  validFrom          DateTime?
+  validTo            DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  tickets            Ticket[]
+
+  @@index([garageId, isActive])
+}
+
+model Ticket {
+  id                 String      @id @default(uuid())
+  tenantId           String
+  tenant             Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  garageId           String
+  garage             Garage      @relation(fields: [garageId], references: [id], onDelete: Cascade)
+  vehicleId          String
+  vehicle            Vehicle     @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
+  spotId             String
+  spot               Spot        @relation(fields: [spotId], references: [id], onDelete: Restrict)
+  ratePolicyId       String
+  ratePolicy         RatePolicy  @relation(fields: [ratePolicyId], references: [id], onDelete: Restrict)
+  checkedInAt        DateTime
+  checkedOutAt       DateTime?
+  status             TicketStatus @default(ACTIVE)
+  totalAmount        Decimal?    @db.Decimal(10, 2)
+  currency           String      @default("USD")
+  createdByUserId    String
+  createdByUser      User        @relation("CreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  checkedOutByUserId String?
+  checkedOutByUser   User?       @relation("CheckedOutByUser", fields: [checkedOutByUserId], references: [id], onDelete: SetNull)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  @@index([garageId, status])
+  @@index([tenantId, status])
+  @@index([checkedInAt])
+}
+
+model AuditLog {
+  id            String     @id @default(uuid())
+  tenantId      String
+  tenant        Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  garageId      String?
+  garage        Garage?    @relation(fields: [garageId], references: [id], onDelete: SetNull)
+  userId        String?
+  user          User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  entityType    EntityType
+  entityId      String
+  action        ActionType
+  details       String?
+  beforeData    Json?
+  afterData     Json?
+  createdAt     DateTime   @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([garageId, createdAt])
+  @@index([entityType, entityId])
+}
